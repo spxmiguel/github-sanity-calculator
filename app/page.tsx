@@ -11,6 +11,7 @@ import {
   Download,
   FlaskConical,
   GitBranch,
+  KeyRound,
   Loader2,
   Microscope,
   RefreshCcw,
@@ -42,7 +43,7 @@ import { AnalysisReport, analyzeGitHubSanity } from "@/lib/githubSanity";
 const loadingSteps = [
   "Conectando eletrodos no histórico público...",
   "Medindo tremores em commits de madrugada...",
-  "Centrifugando READMEs em solução de cafeína...",
+  "Lendo eventos públicos sem gastar a API inteira...",
   "Consultando o manual médico dos frameworks...",
   "Gerando laudo com 0% de rigor científico..."
 ];
@@ -175,11 +176,16 @@ function Certificate({ report }: { report: AnalysisReport }) {
 
 export default function Home() {
   const [username, setUsername] = useState("");
+  const [githubToken, setGithubToken] = useState("");
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingIndex, setLoadingIndex] = useState(0);
   const [error, setError] = useState("");
   const [chartsReady, setChartsReady] = useState(false);
+
+  useEffect(() => {
+    setGithubToken(window.localStorage.getItem("github-sanity-token") ?? "");
+  }, []);
 
   useEffect(() => {
     if (!loading) return;
@@ -201,6 +207,15 @@ export default function Home() {
 
   const topRepos = useMemo(() => report?.repos.slice(0, 7) ?? [], [report]);
 
+  function updateToken(value: string) {
+    setGithubToken(value);
+    if (value.trim()) {
+      window.localStorage.setItem("github-sanity-token", value.trim());
+    } else {
+      window.localStorage.removeItem("github-sanity-token");
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -210,7 +225,7 @@ export default function Home() {
     setLoadingIndex(0);
 
     try {
-      const result = await analyzeGitHubSanity(username);
+      const result = await analyzeGitHubSanity(username, githubToken);
       setReport(result);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "O exame explodiu discretamente.");
@@ -278,9 +293,13 @@ export default function Home() {
             Digite um usuário do GitHub e receba um laudo clínico absurdo baseado em repositórios, horários de commits,
             abandono de projetos, sinais de IA e arquitetura emocionalmente instável.
           </p>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-white/48">
+            Modo econômico: usa só usuário, repositórios e eventos públicos. Se a API reclamar, cole um token do GitHub sem escopos para
+            aumentar o limite.
+          </p>
 
           <form onSubmit={handleSubmit} className="mt-8 rounded-lg border border-white/12 bg-black/34 p-3 shadow-2xl shadow-black/30">
-            <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="grid gap-3 lg:grid-cols-[1fr_0.9fr_auto]">
               <label className="relative flex-1">
                 <GitBranch className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-white/36" />
                 <input
@@ -288,6 +307,17 @@ export default function Home() {
                   onChange={(event) => setUsername(event.target.value)}
                   placeholder="octocat"
                   className="h-14 w-full rounded-lg border border-white/10 bg-white/[0.06] pl-12 pr-4 text-lg font-bold text-white outline-none transition placeholder:text-white/28 focus:border-emerald-300/50 focus:bg-white/[0.08]"
+                />
+              </label>
+              <label className="relative flex-1">
+                <KeyRound className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-white/36" />
+                <input
+                  value={githubToken}
+                  onChange={(event) => updateToken(event.target.value)}
+                  placeholder="token opcional"
+                  type="password"
+                  autoComplete="off"
+                  className="h-14 w-full rounded-lg border border-white/10 bg-white/[0.06] pl-12 pr-4 text-sm font-bold text-white outline-none transition placeholder:text-white/28 focus:border-cyan-300/50 focus:bg-white/[0.08]"
                 />
               </label>
               <button

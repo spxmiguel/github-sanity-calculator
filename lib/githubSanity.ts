@@ -35,6 +35,19 @@ type GitHubCommit = {
   };
 };
 
+type GitHubEvent = {
+  type: string;
+  created_at: string;
+  repo?: {
+    name: string;
+  };
+  payload?: {
+    commits?: {
+      message?: string;
+    }[];
+  };
+};
+
 export type RepoSignal = {
   name: string;
   commits: number;
@@ -101,11 +114,17 @@ const GITHUB_API = "https://api.github.com";
 const AI_TERMS = ["claude.md", "copilot", "openai", "gemini", "cursor", " ai ", "agent", "gpt"];
 const ARCH_TERMS = ["rewrite", "refactor", "next", "v2", "v3", "final", "final-final", "new", "old", "legacy"];
 
-async function githubFetch<T>(path: string): Promise<T> {
+async function githubFetch<T>(path: string, token?: string): Promise<T> {
+  const headers: HeadersInit = {
+    Accept: "application/vnd.github+json"
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${GITHUB_API}${path}`, {
-    headers: {
-      Accept: "application/vnd.github+json"
-    }
+    headers
   });
 
   if (!response.ok) {
@@ -113,24 +132,17 @@ async function githubFetch<T>(path: string): Promise<T> {
       throw new Error("Paciente não encontrado no cadastro internacional de devs.");
     }
     if (response.status === 403) {
-      throw new Error("O laboratório bateu no limite público da API do GitHub. Tente novamente em alguns minutos.");
+      throw new Error(
+        "O laboratório bateu no limite público da API do GitHub. Use um token opcional ou tente novamente em alguns minutos."
+      );
+    }
+    if (response.status === 401) {
+      throw new Error("Token recusado pelo GitHub. O laboratório não aceita crachá falsificado.");
     }
     throw new Error("A máquina de ressonância GitHubiana falhou. Tente novamente.");
   }
 
   return response.json();
-}
-
-async function fetchReadmeSnippet(fullName: string): Promise<string> {
-  try {
-    const response = await fetch(`${GITHUB_API}/repos/${fullName}/readme`, {
-      headers: { Accept: "application/vnd.github.raw" }
-    });
-    if (!response.ok) return "";
-    return (await response.text()).slice(0, 5000);
-  } catch {
-    return "";
-  }
 }
 
 function daysSince(date: string | null): number {
@@ -189,39 +201,47 @@ function recommendationFor(score: number, shiny: string, forbidden: number): str
   return "Continue assim, mas mantenha café fora do alcance depois das 22h.";
 }
 
-export async function analyzeGitHubSanity(username: string): Promise<AnalysisReport> {
+function eventToCommits(events: GitHubEvent[]): GitHubCommit[] {
+  return events.flatMap((event) => {
+    if (event.type !== "PushEvent") return [];
+    const commits = event.payload?.commits?.length ? event.payload.commits : [{ message: "push misterioso sem mensagem" }];
+    return commits.map((commit) => ({
+      commit: {
+        author: {
+          date: event.created_at
+        },
+        message: commit.message ?? "commit sem depoimento"
+      }
+    }));
+  });
+}
+
+export async function analyzeGitHubSanity(username: string, token?: string): Promise<AnalysisReport> {
   const cleanUsername = username.trim().replace(/^@/, "");
   if (!cleanUsername) throw new Error("Digite um username para iniciar o exame.");
+  const cleanToken = token?.trim() || undefined;
 
-  const user = await githubFetch<GitHubUser>(`/users/${encodeURIComponent(cleanUsername)}`);
-  const repos = await githubFetch<GitHubRepo[]>(
-    `/users/${encodeURIComponent(cleanUsername)}/repos?per_page=100&sort=updated&type=owner`
-  );
+  const [user, repos, events] = await Promise.all([
+    githubFetch<GitHubUser>(`/users/${encodeURIComponent(cleanUsername)}`, cleanToken),
+    githubFetch<GitHubRepo[]>(`/users/${encodeURIComponent(cleanUsername)}/repos?per_page=100&sort=updated&type=owner`, cleanToken),
+    githubFetch<GitHubEvent[]>(`/users/${encodeURIComponent(cleanUsername)}/events/public?per_page=100`, cleanToken)
+  ]);
 
-  const commitRepos = repos.filter((repo) => !repo.fork).slice(0, 10);
-  const commitResults = await Promise.allSettled(
-    commitRepos.map((repo) =>
-      githubFetch<GitHubCommit[]>(`/repos/${repo.full_name}/commits?author=${encodeURIComponent(cleanUsername)}&per_page=25`)
-    )
-  );
-  const sampledCommits = commitResults.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
-
-  const readmeResults = await Promise.allSettled(repos.slice(0, 16).map((repo) => fetchReadmeSnippet(repo.full_name)));
-  const readmes = readmeResults.map((result) => (result.status === "fulfilled" ? result.value : ""));
-
+  const sampledCommits = eventToCommits(events);
   const commitCountByRepo = new Map<string, number>();
-  commitRepos.forEach((repo, index) => {
-    const result = commitResults[index];
-    commitCountByRepo.set(repo.full_name, result?.status === "fulfilled" ? result.value.length : 0);
+  events.forEach((event) => {
+    if (event.type !== "PushEvent" || !event.repo?.name) return;
+    const commits = Math.max(1, event.payload?.commits?.length ?? 1);
+    commitCountByRepo.set(event.repo.name, (commitCountByRepo.get(event.repo.name) ?? 0) + commits);
   });
 
-  const repoSignals = repos.map((repo, index) => {
-    const text = [repo.name, repo.description ?? "", readmes[index] ?? ""].join(" ");
+  const repoSignals = repos.map((repo) => {
+    const text = [repo.name, repo.description ?? "", repo.language ?? ""].join(" ");
     const commits = commitCountByRepo.get(repo.full_name) ?? 0;
     const age = daysSince(repo.created_at);
     const stale = daysSince(repo.pushed_at ?? repo.updated_at);
     const abandoned = stale > 240 && !repo.archived && repo.stargazers_count < 5;
-    const developed = commits >= 6 || repo.size > 240 || repo.stargazers_count > 2;
+    const developed = commits >= 3 || repo.size > 240 || repo.stargazers_count > 2 || stale < 45;
     const finished =
       repo.archived ||
       /done|complete|stable|1\.0|release|finished|finalizado/i.test(text) ||
@@ -282,10 +302,7 @@ export async function analyzeGitHubSanity(username: string): Promise<AnalysisRep
   );
 
   const shinyScore = clamp((total - developed) * 3.1 + (developed - finished) * 4.2 + Math.max(0, total - 20) * 1.8);
-  const aiSources = repos
-    .slice(0, 16)
-    .map((repo, index) => [repo.name, repo.description ?? "", readmes[index] ?? ""].join(" "))
-    .join(" ");
+  const aiSources = repos.map((repo) => [repo.name, repo.description ?? "", repo.language ?? ""].join(" ")).join(" ");
   const aiTerms = scoreTerms(aiSources, AI_TERMS);
   const aiDependencyScore = clamp(aiTerms.score * 18 + repoSignals.reduce((sum, repo) => sum + repo.aiScore, 0) * 5);
   const architectureSuspects = repos

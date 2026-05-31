@@ -16,3 +16,11 @@ npm run build
 ```
 
 O app usa apenas a GitHub REST API publica no navegador e gera uma exportacao estatica em `out/`, pronta para GitHub Pages.
+
+Para evitar limite de API, ele usa o modo economico:
+
+- `GET /users/{username}`
+- `GET /users/{username}/repos`
+- `GET /users/{username}/events/public`
+
+Tambem aceita um token opcional do GitHub no proprio navegador, salvo em `localStorage`, para aumentar o limite sem backend.
