@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  background: #05070a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(27, 158, 119, 0.16), transparent 24rem),
+    radial-gradient(circle at 88% 8%, rgba(231, 111, 81, 0.12), transparent 26rem),
+    linear-gradient(135deg, #05070a 0%, #0a1111 45%, #090a12 100%);
+  color: #e8fff7;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::selection {
+  background: #34d399;
+  color: #04110c;
+}
+
+.lab-grid {
+  background-image:
+    linear-gradient(rgba(110, 231, 183, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(110, 231, 183, 0.06) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+.scanline {
+  position: relative;
+  overflow: hidden;
+}
+
+.scanline::after {
+  animation: scan 4.2s linear infinite;
+  background: linear-gradient(180deg, transparent, rgba(52, 211, 153, 0.16), transparent);
+  content: "";
+  height: 34%;
+  inset: -40% 0 auto 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+@keyframes scan {
+  to {
+    transform: translateY(430%);
+  }
+}
+
+.pulse-ring {
+  animation: pulse-ring 2.8s ease-in-out infinite;
+}
+
+@keyframes pulse-ring {
+  0%,
+  100% {
+    opacity: 0.46;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.92;
+    transform: scale(1.025);
+  }
+}
+
+.ticker {
+  animation: ticker 26s linear infinite;
+}
+
+@keyframes ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
