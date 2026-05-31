@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const isGitHubPages = process.env.GITHUB_PAGES === "true";
 
 const nextConfig: NextConfig = {
-  output: "export",
+  output: isGitHubPages ? "export" : undefined,
   trailingSlash: true,
   basePath: isGitHubPages ? "/github-sanity-calculator" : undefined,
   assetPrefix: isGitHubPages ? "/github-sanity-calculator" : undefined,

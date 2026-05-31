@@ -54,11 +54,19 @@ const loadingSteps = [
 type ReportMeta = {
   cachedAt: number;
   fromCache: boolean;
+  source: "api" | "browser";
 };
 
 type CachedReport = {
   cachedAt: number;
   report: AnalysisReport;
+  source?: "api" | "browser";
+};
+
+type ApiAnalyzeResponse = {
+  cachedAt: number;
+  report: AnalysisReport;
+  source: string;
 };
 
 function cacheKey(username: string) {
@@ -93,13 +101,33 @@ function readCachedReport(username: string): CachedReport | null {
   }
 }
 
-function writeCachedReport(username: string, report: AnalysisReport) {
+function writeCachedReport(username: string, report: AnalysisReport, source: ReportMeta["source"]) {
   const payload: CachedReport = {
     cachedAt: Date.now(),
-    report
+    report,
+    source
   };
   window.localStorage.setItem(cacheKey(username), JSON.stringify(payload));
   return payload;
+}
+
+async function analyzeViaOwnApi(username: string): Promise<ApiAnalyzeResponse> {
+  const baseUrl = process.env.NEXT_PUBLIC_ANALYZE_API_URL || "/api/analyze";
+  const url = new URL(baseUrl, window.location.origin);
+  url.searchParams.set("username", username);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "A API própria não respondeu ao eletrocardiograma.");
+  }
+
+  return response.json();
 }
 
 function StatCard({
@@ -285,21 +313,28 @@ export default function Home() {
 
     if (cached && isFresh) {
       setReport(cached.report);
-      setReportMeta({ cachedAt: cached.cachedAt, fromCache: true });
+      setReportMeta({ cachedAt: cached.cachedAt, fromCache: true, source: cached.source ?? "browser" });
       return;
     }
 
     setLoading(true);
 
     try {
-      const result = await analyzeGitHubSanity(requestedUsername, githubToken);
-      const saved = writeCachedReport(requestedUsername, result);
-      setReport(result);
-      setReportMeta({ cachedAt: saved.cachedAt, fromCache: false });
+      try {
+        const apiResult = await analyzeViaOwnApi(requestedUsername);
+        const saved = writeCachedReport(requestedUsername, apiResult.report, "api");
+        setReport(apiResult.report);
+        setReportMeta({ cachedAt: apiResult.cachedAt || saved.cachedAt, fromCache: false, source: "api" });
+      } catch {
+        const result = await analyzeGitHubSanity(requestedUsername, githubToken);
+        const saved = writeCachedReport(requestedUsername, result, "browser");
+        setReport(result);
+        setReportMeta({ cachedAt: saved.cachedAt, fromCache: false, source: "browser" });
+      }
     } catch (caught) {
       if (cached) {
         setReport(cached.report);
-        setReportMeta({ cachedAt: cached.cachedAt, fromCache: true });
+        setReportMeta({ cachedAt: cached.cachedAt, fromCache: true, source: cached.source ?? "browser" });
       }
       setError(caught instanceof Error ? caught.message : "O exame explodiu discretamente.");
     } finally {
@@ -367,8 +402,8 @@ export default function Home() {
             abandono de projetos, sinais de IA e arquitetura emocionalmente instável.
           </p>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-white/48">
-            Modo econômico: usa só usuário, repositórios e eventos públicos. Se a API reclamar, cole um token do GitHub sem escopos para
-            aumentar o limite.
+            API própria primeiro: ela consulta o GitHub, usa cache HTTP de 24h e pode rodar com token no servidor. Se ela não existir neste
+            deploy, o app cai no modo econômico do navegador.
           </p>
           <p className="mt-2 inline-flex max-w-2xl items-center gap-2 text-sm leading-6 text-emerald-100/60">
             <Clock3 className="h-4 w-4 shrink-0" />
@@ -466,7 +501,8 @@ export default function Home() {
               {reportMeta ? (
                 <p className="mt-2 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white/58">
                   <Clock3 className="h-4 w-4 text-emerald-200" />
-                  {reportMeta.fromCache ? "Laudo em cache" : "Laudo atualizado"} {formatRelativeCacheTime(reportMeta.cachedAt)}.
+                  {reportMeta.fromCache ? "Laudo em cache" : "Laudo atualizado"} {formatRelativeCacheTime(reportMeta.cachedAt)} via{" "}
+                  {reportMeta.source === "api" ? "API própria" : "navegador"}.
                   Próxima atualização {formatNextRefresh(reportMeta.cachedAt + CACHE_TTL_MS)}.
                 </p>
               ) : null}
