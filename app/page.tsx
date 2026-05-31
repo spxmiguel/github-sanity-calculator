@@ -6,6 +6,7 @@ import {
   Activity,
   AlertTriangle,
   Brain,
+  Clock3,
   ClipboardPlus,
   Dna,
   Download,
@@ -40,6 +41,8 @@ import {
 import clsx from "clsx";
 import { AnalysisReport, analyzeGitHubSanity } from "@/lib/githubSanity";
 
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
 const loadingSteps = [
   "Conectando eletrodos no histórico público...",
   "Medindo tremores em commits de madrugada...",
@@ -47,6 +50,57 @@ const loadingSteps = [
   "Consultando o manual médico dos frameworks...",
   "Gerando laudo com 0% de rigor científico..."
 ];
+
+type ReportMeta = {
+  cachedAt: number;
+  fromCache: boolean;
+};
+
+type CachedReport = {
+  cachedAt: number;
+  report: AnalysisReport;
+};
+
+function cacheKey(username: string) {
+  return `github-sanity-report:${username.trim().replace(/^@/, "").toLowerCase()}`;
+}
+
+function formatRelativeCacheTime(timestamp: number) {
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  if (minutes < 1) return "agora";
+  if (minutes < 60) return `há ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return `há ${hours} h`;
+}
+
+function formatNextRefresh(timestamp: number) {
+  const minutes = Math.max(0, Math.ceil((timestamp - Date.now()) / 60000));
+  if (minutes <= 1) return "em instantes";
+  if (minutes < 60) return `em ${minutes} min`;
+  const hours = Math.ceil(minutes / 60);
+  return `em ${hours} h`;
+}
+
+function readCachedReport(username: string): CachedReport | null {
+  try {
+    const raw = window.localStorage.getItem(cacheKey(username));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedReport;
+    if (!parsed.cachedAt || !parsed.report?.user?.login) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedReport(username: string, report: AnalysisReport) {
+  const payload: CachedReport = {
+    cachedAt: Date.now(),
+    report
+  };
+  window.localStorage.setItem(cacheKey(username), JSON.stringify(payload));
+  return payload;
+}
 
 function StatCard({
   label,
@@ -178,6 +232,7 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [githubToken, setGithubToken] = useState("");
   const [report, setReport] = useState<AnalysisReport | null>(null);
+  const [reportMeta, setReportMeta] = useState<ReportMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingIndex, setLoadingIndex] = useState(0);
   const [error, setError] = useState("");
@@ -220,14 +275,32 @@ export default function Home() {
     event.preventDefault();
     setError("");
     setReport(null);
+    setReportMeta(null);
     setChartsReady(false);
-    setLoading(true);
     setLoadingIndex(0);
 
+    const requestedUsername = username.trim().replace(/^@/, "");
+    const cached = readCachedReport(requestedUsername);
+    const isFresh = cached ? Date.now() - cached.cachedAt < CACHE_TTL_MS : false;
+
+    if (cached && isFresh) {
+      setReport(cached.report);
+      setReportMeta({ cachedAt: cached.cachedAt, fromCache: true });
+      return;
+    }
+
+    setLoading(true);
+
     try {
-      const result = await analyzeGitHubSanity(username, githubToken);
+      const result = await analyzeGitHubSanity(requestedUsername, githubToken);
+      const saved = writeCachedReport(requestedUsername, result);
       setReport(result);
+      setReportMeta({ cachedAt: saved.cachedAt, fromCache: false });
     } catch (caught) {
+      if (cached) {
+        setReport(cached.report);
+        setReportMeta({ cachedAt: cached.cachedAt, fromCache: true });
+      }
       setError(caught instanceof Error ? caught.message : "O exame explodiu discretamente.");
     } finally {
       setLoading(false);
@@ -297,6 +370,10 @@ export default function Home() {
             Modo econômico: usa só usuário, repositórios e eventos públicos. Se a API reclamar, cole um token do GitHub sem escopos para
             aumentar o limite.
           </p>
+          <p className="mt-2 inline-flex max-w-2xl items-center gap-2 text-sm leading-6 text-emerald-100/60">
+            <Clock3 className="h-4 w-4 shrink-0" />
+            Laudos ficam em cache por 24h por username. O laboratório só atualiza sob demanda quando a quarentena vence.
+          </p>
 
           <form onSubmit={handleSubmit} className="mt-8 rounded-lg border border-white/12 bg-black/34 p-3 shadow-2xl shadow-black/30">
             <div className="grid gap-3 lg:grid-cols-[1fr_0.9fr_auto]">
@@ -334,7 +411,10 @@ export default function Home() {
           {error ? (
             <div className="mt-4 flex items-start gap-3 rounded-lg border border-rose-300/30 bg-rose-400/10 p-4 text-rose-100">
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-              <p>{error}</p>
+              <p>
+                {error}
+                {reportMeta?.fromCache ? " Mostrei o último laudo salvo para não desperdiçar eletrodos." : ""}
+              </p>
             </div>
           ) : null}
         </div>
@@ -383,6 +463,13 @@ export default function Home() {
             <div>
               <p className="text-xs uppercase tracking-[0.26em] text-emerald-200/60">relatório completo</p>
               <h2 className="mt-2 text-4xl font-black text-white">Paciente @{report.user.login}</h2>
+              {reportMeta ? (
+                <p className="mt-2 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white/58">
+                  <Clock3 className="h-4 w-4 text-emerald-200" />
+                  {reportMeta.fromCache ? "Laudo em cache" : "Laudo atualizado"} {formatRelativeCacheTime(reportMeta.cachedAt)}.
+                  Próxima atualização {formatNextRefresh(reportMeta.cachedAt + CACHE_TTL_MS)}.
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-3">
               <button
@@ -402,6 +489,7 @@ export default function Home() {
               <button
                 onClick={() => {
                   setReport(null);
+                  setReportMeta(null);
                   setUsername("");
                   setError("");
                   setChartsReady(false);
